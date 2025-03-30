@@ -1,78 +1,95 @@
-from flask import Flask, request, Response
 import boto3
+import json
 import os
-import csv
+import uuid
+from flask import Flask, request, Response
+import threading
+import time
 
-ASU_ID = '1220103989'
-BUCKET_NAME = f"{ASU_ID}-in-bucket"
-DOMAIN_NAME = f"{ASU_ID}-simpleDB"
+ASU_ID = "1220103989"
+INPUT_BUCKET = f"{ASU_ID}-in-bucket"
+OUTPUT_BUCKET = f"{ASU_ID}-out-bucket"
+REQUEST_QUEUE = f"{ASU_ID}-req-queue"
+RESPONSE_QUEUE = f"{ASU_ID}-resp-queue"
 s3 = boto3.client('s3', region_name='us-east-1')
-sdb = boto3.client('sdb', region_name='us-east-1')
+sqs = boto3.client('sqs', region_name='us-east-1')
+REQUEST_QUEUE_URL = sqs.get_queue_url(QueueName=REQUEST_QUEUE)['QueueUrl']
+RESPONSE_QUEUE_URL = sqs.get_queue_url(QueueName=RESPONSE_QUEUE)['QueueUrl']
+pending_requests = {}
+pending_requests_lock = threading.Lock()
 
 app = Flask(__name__)
 
-def create_and_populate_sdb_domain(csv_file):
-    #creating a domain
-    response = sdb.create_domain(DomainName=DOMAIN_NAME)
-
-    #reading throught the provided csv file and populating simpleDB
-    with open(csv_file, newline='') as csvfile:
-        dict = csv.DictReader(csvfile)
-        for row in dict:
-            image_file = row['Image']   
-            recongnition_result = row['Results']  
-
-            #populating the DB
-            operation_response = sdb.put_attributes(
-                DomainName=DOMAIN_NAME,
-                ItemName=image_file,
-                Attributes=[
-                    {
-                        'Name': 'result',
-                        'Value': recongnition_result,
-                        'Replace': True
-                    }
-                ]
+def retrieve_responses():
+    while True:
+        try:
+            resp_queue_msg = sqs.receive_message(
+                QueueUrl=RESPONSE_QUEUE_URL,
+                MaxNumberOfMessages=10,
+                WaitTimeSeconds=5
             )
+            
+            if 'Messages' in resp_queue_msg :
+                for message in resp_queue_msg ['Messages']:
+                    receipt_handle = message['ReceiptHandle']
+                    basename  = json.loads(message['Body']).get('filename')
+                    result = json.loads(message['Body']).get('result')
+                    
+                    with pending_requests_lock:
+                        for filename in list(pending_requests.keys()):
+                            if filename.startswith(basename + '.') or filename == basename:
+                                formatted_result = f"{basename}:{result}"
+                                pending_requests[filename] = formatted_result
+                                break
+                    
+                    sqs.delete_message(
+                        QueueUrl=RESPONSE_QUEUE_URL,
+                        ReceiptHandle=receipt_handle
+                    )
+            else:
+                print("No new messages in response queue.")
+        except Exception as e:
+            time.sleep(5)
 
-def upload_to_S3(file):
-    try:
-        s3.upload_fileobj(file, BUCKET_NAME, file.filename)
-    except Exception as e:
-        print(f"Error uploading {file.filename} to S3: {e}")
-        return Response("Error uploading file to S3", status=500)
-
-def get_recognition_result(filename):
-    #searching the simpleDB 
-    search_result = sdb.get_attributes(
-        DomainName=DOMAIN_NAME,
-        ItemName=filename,
-        ConsistentRead=True
-    )
-
-    # Looping through each attribute in the 'Attributes' list from the search result.
-    # If an attribute's 'Name' equals 'result', return its corresponding 'Value'.
-    for attr in search_result.get('Attributes', []):
-        if attr.get('Name') == 'result':
-            return attr.get('Value')
-        
+response_thread = threading.Thread(target=retrieve_responses, daemon=True)
+response_thread.start()
 
 @app.route('/', methods=['POST'])
-def handle_post_request():
+def process_post_request():
+    try:    
+        file = request.files['inputFile']
+        filename = file.filename
+        request_id = str(uuid.uuid4())
+        
+        s3.upload_fileobj(file, INPUT_BUCKET, filename)
+        
+        message = {
+            'request_id': request_id,
+            'filename': filename
+        }
+        
+        with pending_requests_lock:
+            pending_requests[filename] = None
+        
+        sqs.send_message(
+            QueueUrl=REQUEST_QUEUE_URL,
+            MessageBody=json.dumps(message)
+        )
 
-    file = request.files['inputFile']
+        start_time = time.time()
+        wait_until = 60 
+        while time.time() - start_time < wait_until:
+            with pending_requests_lock:
+                if pending_requests.get(filename) is not None:
+                    result = pending_requests.pop(filename)
+                    return Response(result, status=200, mimetype='text/plain')
+            time.sleep(0.1)
+
+        return Response("Request timed out", status=504)
     
-    upload_to_S3(file)
-
-    file_name = os.path.splitext(file.filename)
-
-    #Query SimpleDB for the recognition result
-    recognition_result = get_recognition_result(file_name[0]) 
-    response_text = f"{file_name[0]}:{recognition_result}"
-    return Response(response_text, status=200, mimetype='text/plain')
-
+    except Exception as e:
+        return Response(f"Error: {str(e)}", status=500)
 
 if __name__ == '__main__':
-    # csv_file = 'images.csv'
-    # create_and_populate_sdb_domain(csv_file)
-    app.run(host='0.0.0.0', port=8000, threaded=True)
+    print("Starting web server on port 8000...")
+    app.run(host='0.0.0.0', port=8000)
