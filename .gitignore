@@ -1,12 +1,1 @@
-venv/
-*.pyc
-pycache/
-credentials/
-*.pem
-.env
-.aws/
-aws.config
-config.ini
-*credentials*
-*key*
 .DS_Store
