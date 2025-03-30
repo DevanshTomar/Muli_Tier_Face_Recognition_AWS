@@ -5,16 +5,25 @@ import uuid
 from flask import Flask, request, Response
 import threading
 import time
+from dotenv import load_dotenv
 
-ASU_ID = "1220103989"
-INPUT_BUCKET = f"{ASU_ID}-in-bucket"
-OUTPUT_BUCKET = f"{ASU_ID}-out-bucket"
-REQUEST_QUEUE = f"{ASU_ID}-req-queue"
-RESPONSE_QUEUE = f"{ASU_ID}-resp-queue"
-s3 = boto3.client('s3', region_name='us-east-1')
-sqs = boto3.client('sqs', region_name='us-east-1')
+# Load environment variables
+load_dotenv()
+
+ID = os.getenv('ID')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
+REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '60'))
+
+INPUT_BUCKET = f"{ID}-in-bucket"
+OUTPUT_BUCKET = f"{ID}-out-bucket"
+REQUEST_QUEUE = f"{ID}-req-queue"
+RESPONSE_QUEUE = f"{ID}-resp-queue"
+
+s3 = boto3.client('s3', region_name=AWS_REGION)
+sqs = boto3.client('sqs', region_name=AWS_REGION)
 REQUEST_QUEUE_URL = sqs.get_queue_url(QueueName=REQUEST_QUEUE)['QueueUrl']
 RESPONSE_QUEUE_URL = sqs.get_queue_url(QueueName=RESPONSE_QUEUE)['QueueUrl']
+
 pending_requests = {}
 pending_requests_lock = threading.Lock()
 
@@ -29,10 +38,10 @@ def retrieve_responses():
                 WaitTimeSeconds=5
             )
             
-            if 'Messages' in resp_queue_msg :
-                for message in resp_queue_msg ['Messages']:
+            if 'Messages' in resp_queue_msg:
+                for message in resp_queue_msg['Messages']:
                     receipt_handle = message['ReceiptHandle']
-                    basename  = json.loads(message['Body']).get('filename')
+                    basename = json.loads(message['Body']).get('filename')
                     result = json.loads(message['Body']).get('result')
                     
                     with pending_requests_lock:
@@ -77,8 +86,7 @@ def process_post_request():
         )
 
         start_time = time.time()
-        wait_until = 60 
-        while time.time() - start_time < wait_until:
+        while time.time() - start_time < REQUEST_TIMEOUT:
             with pending_requests_lock:
                 if pending_requests.get(filename) is not None:
                     result = pending_requests.pop(filename)

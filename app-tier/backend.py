@@ -4,18 +4,24 @@ import os
 import sys
 import time
 from face_recognition import face_match
+from dotenv import load_dotenv
 
-ASU_ID = "1220103989"
+# Load environment variables
+load_dotenv()
+
+ID = os.getenv('ID')
+AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
 
 # AWS resource names and clients
-INPUT_BUCKET = f"{ASU_ID}-in-bucket"
-OUTPUT_BUCKET = f"{ASU_ID}-out-bucket"
-REQUEST_QUEUE = f"{ASU_ID}-req-queue"
-RESPONSE_QUEUE = f"{ASU_ID}-resp-queue"
-s3 = boto3.client('s3', region_name='us-east-1')
-sqs = boto3.client('sqs', region_name='us-east-1')
+INPUT_BUCKET = f"{ID}-in-bucket"
+OUTPUT_BUCKET = f"{ID}-out-bucket"
+REQUEST_QUEUE = f"{ID}-req-queue"
+RESPONSE_QUEUE = f"{ID}-resp-queue"
+
+s3 = boto3.client('s3', region_name=AWS_REGION)
+sqs = boto3.client('sqs', region_name=AWS_REGION)
 REQUEST_QUEUE_URL = sqs.get_queue_url(QueueName=REQUEST_QUEUE)['QueueUrl']
-RESPONE_QUEUE_URL = sqs.get_queue_url(QueueName=RESPONSE_QUEUE)['QueueUrl']
+RESPONSE_QUEUE_URL = sqs.get_queue_url(QueueName=RESPONSE_QUEUE)['QueueUrl']
 
 def handle_request(request):
     try:
@@ -40,7 +46,7 @@ def handle_request(request):
             'result': match_result
         }
         sqs.send_message(
-            QueueUrl=RESPONE_QUEUE_URL,
+            QueueUrl=RESPONSE_QUEUE_URL,
             MessageBody=json.dumps(response_queue_message)
         )
         sqs.delete_message(

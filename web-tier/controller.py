@@ -1,7 +1,12 @@
 import boto3
 import time
 import logging
+import os
 from botocore.exceptions import ClientError
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,16 +16,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class AutoscalingController:
-    def __init__(self, asu_id, region='us-east-1'):
-        self.asu_id = asu_id
-        self.region = region
-        self.request_queue = f"{asu_id}-req-queue"
-        self.response_queue = f"{asu_id}-resp-queue"
+    def __init__(self, id=None, region=None):
+        self.id = id or os.getenv('ID')
+        self.region = region or os.getenv('AWS_REGION', 'us-east-1')
+        self.request_queue = f"{self.id}-req-queue"
+        self.response_queue = f"{self.id}-resp-queue"
         self.app_instance_name = "app-tier-instance"
-        self.ec2_client = boto3.client('ec2', region_name=region)
-        self.sqs_client = boto3.client('sqs', region_name=region)
-        self.max_instances = 15  
-        self.check_interval = 5
+        self.ec2_client = boto3.client('ec2', region_name=self.region)
+        self.sqs_client = boto3.client('sqs', region_name=self.region)
+        self.max_instances = int(os.getenv('MAX_INSTANCES', '15'))
+        self.check_interval = int(os.getenv('CHECK_INTERVAL', '5'))
         self.req_queue_url = self.sqs_client.get_queue_url(QueueName=self.request_queue)['QueueUrl']
         self.resp_queue_url = self.sqs_client.get_queue_url(QueueName=self.response_queue)['QueueUrl']
     
@@ -131,6 +136,5 @@ class AutoscalingController:
                 
 
 if __name__ == "__main__":
-    asu_id = "1220103989"
-    controller = AutoscalingController(asu_id)
+    controller = AutoscalingController()
     controller.start_monitoring()
