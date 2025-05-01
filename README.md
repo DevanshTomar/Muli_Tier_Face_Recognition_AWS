@@ -68,31 +68,6 @@ The system consists of three main tiers:
 └── README.md         # This file
 ```
 
-## Usage
-
-1. **Start the Web Server**
-   ```bash
-   cd web-tier
-   python server.py
-   ```
-
-2. **Start the Controller**
-   ```bash
-   cd web-tier
-   python controller.py
-   ```
-
-3. **Start App Tier Instances**
-   ```bash
-   cd app-tier
-   python backend.py
-   ```
-
-4. **Access the Web Interface**
-   - Open a web browser and navigate to `http://localhost:8000`
-   - Upload an image for face recognition
-   - Wait for the result
-
 
 ## Auto-scaling Behavior
 
